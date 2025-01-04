@@ -1,0 +1,63 @@
+{% extends 'binance_html/base2.html' %}
+
+{% block title %}
+    All Coin
+{% endblock %}
+
+{% block content %}
+    <table id="datatablesSimple">
+        <thead >
+        <tr>
+            <th>Coin</th>
+            <th>Title</th>
+            <th>Created Date</th>
+            <th></th>
+        </tr>
+        </thead>
+        <tbody>
+
+
+        {% for coin in coins %}
+        <tr>
+            <td><a href="{% url 'coin_app:single_coin' coin.coin %}"> {{ coin.coin }}</a></td>
+            <td>{{ coin.short_title }}</td>
+            <td>{{ coin.created_at }}</td>
+            <td><button class="btn btn-primary" onclick="window.location.href='{% url 'coin_app:single_coin' coin.coin %}'">Info</button></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+
+    <table class="table mt-5 table-bordered table-striped table-hover">
+        <thead class="table-dark">
+        <tr>
+            <th>Coin</th>
+            <th>Title</th>
+            <th>Rank</th>
+            <th>Capitalization</th>
+            <th>Diluted Valuation</th>
+            <th>Dominance</th>
+            <th>Circulation offer</th>
+            <th>Max Price</th>
+            <th>Min Price</th>
+        </tr>
+        </thead>
+
+        <tbody>
+
+        {% for coin_i in coin_info %}
+        <tr>
+            <td>{{ coin_i.cripto_coin }}</td>
+            <td>{{ coin_i.title }}</td>
+            <td>{{ coin_i.rank }}</td>
+            <td>{{ coin_i.capitalization }}</td>
+            <td>{{ coin_i.diluted_valuation }}</td>
+            <td>{{ coin_i.dominance }}</td>
+            <td>{{ coin_i.circulating_offer }}</td>
+            <td>{{ coin_i.max_price }}</td>
+            <td>{{ coin_i.min_price }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+{% endblock %}

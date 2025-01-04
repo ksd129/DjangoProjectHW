@@ -1,0 +1,13 @@
+{% extends 'binance_html/base2.html' %}
+{% block title %}
+{{ coin.short_title }}
+{% endblock %}
+
+{% block content %}
+    {{ coin }}{{ coin_info }}
+    {{ coin.pk }}
+    {{ coin_info.capitalization }}
+    {{ coin.coin }}
+    {{ coin_info.title }}
+    {{ coin.short_title }}, {{coin.created_at}}, {{ coin.get_age }}
+{% endblock %}
