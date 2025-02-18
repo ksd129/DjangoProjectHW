@@ -7,4 +7,5 @@ urlpatterns = [
     path('', views.index, name='index'),
     path('coin/<str:cripto_coin>/', views.single_coin, name='single_coin'),
     path('bases/', views.base_simple, name='base_simple'),
+    path('<slug:coin_slug>/', views.coin_by_slug, name='coin_by_slug')
 ]

@@ -9,37 +9,63 @@ https://docs.djangoproject.com/en/5.1/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.1/ref/settings/
 """
-
+import os
 from pathlib import Path
+
+import environ
+from celery.schedules import crontab, schedule
+
+from apps.celery_screening.celery_beat_schedule.schedule import CELERY_BEAT_SCHEDULE
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+APPS_DIR = BASE_DIR / "apps"
+
+env = environ.FileAwareEnv()
+env.read_env(BASE_DIR.joinpath(".env"))
 
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-xoq@43mngm73k-iu41^vjft5lg@)2q=6v5d!=iefv5$1$9%vj7'
+SECRET_KEY = env.str("DJANGO__SECRET_KEY")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = env.bool("DJANGO__DEBUG", False)
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS: list[str] = env.list("DJANGO__ALLOWED_HOSTS", default=[])
+if DEBUG:
+    ALLOWED_HOSTS += [
+        "localhost",
+        "127.0.0.1",
+    ]
 
 
 # Application definition
 
-INSTALLED_APPS = [
-    'django.contrib.admin',
-    'django.contrib.auth',
-    'django.contrib.contenttypes',
-    'django.contrib.sessions',
-    'django.contrib.messages',
-    'django.contrib.staticfiles',
-    'cryptocurrency_wi.apps.CryptocurrencyWiConfig',
-    'api.apps.ApiConfig',
+DJANGO_APPS = [
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+    "django.contrib.postgres",
 ]
+
+LOCAL_APPS = [
+    'apps.cryptocurrency_wi.apps.CryptocurrencyWiConfig',
+    'apps.api.apps.ApiConfig',
+    'apps.celery_screening.apps.CeleryScreeningConfig',
+]
+
+THIRD_PARTY_APPS: list = [
+    'django_celery_beat',
+    'django_celery_results',
+]
+
+INSTALLED_APPS = DJANGO_APPS + LOCAL_APPS + THIRD_PARTY_APPS
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -56,8 +82,8 @@ ROOT_URLCONF = 'core.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [BASE_DIR / 'templates']
-        ,
+        'DIRS': [APPS_DIR / 'templates'],
+        # 'DIRS': [os.path.join(APPS_DIR, 'templates')],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -77,10 +103,19 @@ WSGI_APPLICATION = 'core.wsgi.application'
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
+    # "default": {
+    #     "ENGINE": "django.db.backends.sqlite3",
+    #     "NAME": BASE_DIR / "db.sqlite3",
+    # },
+    "default": env.db_url_config(
+        env.str(
+            "DJANGO__DATABASE_URL",
+            # default=f"sqlite:///{BASE_DIR / 'db' / 'db.sqlite3'}",
+            # PosgreSQL
+            default=f"postgres://{env.str('POSTGRES_USER')}:{env.str('POSTGRES_PASSWORD')}@"
+            f"{env.str('POSTGRES_HOST')}:{env.int('POSTGRES_PORT')}/{env.str('POSTGRES_DB')}",
+        ),
+    ),
 }
 
 
@@ -108,7 +143,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 LANGUAGE_CODE = 'en-us'
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'EET'
 
 USE_I18N = True
 
@@ -119,9 +154,27 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.1/howto/static-files/
 
 STATIC_URL = 'static/'
-STATICFILES_DIRS = [BASE_DIR/ 'cryptocurrency_wi/static',]
+STATICFILES_DIRS = [APPS_DIR / 'static', ]
+STATIC_ROOT = BASE_DIR / "staticfiles"
+
+STATICFILES_FINDERS = [
+    "django.contrib.staticfiles.finders.FileSystemFinder",
+    "django.contrib.staticfiles.finders.AppDirectoriesFinder",
+]
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+CELERY_BROKER_URL = env.str("DJANGO__CELERY_BROKER_URL")
+CELERY_RESULT_BACKEND = env.str("DJANGO__CELERY_RESULT_BACKEND")
+
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = env.bool("DJANGO__CELERY_BROKER_RETRY_ON_STARTUP", default=False)
+CELERY_RESULT_EXTENDED = True
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = 'EET'
+
+

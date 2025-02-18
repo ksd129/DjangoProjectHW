@@ -8,6 +8,19 @@ readme = "README.md"
 [tool.poetry.dependencies]
 python = "^3.13"
 django = "^5.1.4"
+django-tastypie = "^0.15.0"
+celery = "^5.4.0"
+environ = "^1.0"
+django-environ = "^0.12.0"
+django-celery-beat = "^2.7.0"
+redis = "^5.2.1"
+flower = "^2.0.1"
+requests = "^2.32.3"
+psycopg2-binary = "^2.9.10"
+psycopg2 = "^2.9.10"
+django-celery-results = "^2.5.1"
+websockets = "^15.0"
+aiohttp = "^3.11.12"
 
 
 [build-system]

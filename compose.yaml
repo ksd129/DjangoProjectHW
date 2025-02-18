@@ -1,0 +1,13 @@
+volumes:
+  postgres_data: {}
+
+x-app: &app
+  build: .
+
+  env_file:
+    - .env
+  environment:
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: 5432
+
+    DJANGO__CELERY_BROKER_URL: "redis://localhost:5672/"

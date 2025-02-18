@@ -17,7 +17,11 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 
+from apps.cryptocurrency_wi.views import page_not_found
+
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('binance/', include('cryptocurrency_wi.urls')),
+    path('binance/', include('apps.cryptocurrency_wi.urls')),
 ]
+
+handler404 = page_not_found

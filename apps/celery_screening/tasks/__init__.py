@@ -1,0 +1,1 @@
+from .tasks import get_ticker_all_pairs_usdt
