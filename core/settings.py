@@ -54,6 +54,7 @@ DJANGO_APPS = [
     "django.contrib.postgres",
 ]
 
+
 LOCAL_APPS = [
     'apps.cryptocurrency_wi.apps.CryptocurrencyWiConfig',
     'apps.api.apps.ApiConfig',

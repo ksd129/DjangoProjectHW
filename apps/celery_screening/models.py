@@ -31,6 +31,7 @@ class BaseTickerModel(BaseTickerModelSymbol):
 
 
 
+
 class Ticker24hrUSDT(BaseTickerModel):
     """
 symbol: Символ торговой пары (например, "BTCUSDT").
