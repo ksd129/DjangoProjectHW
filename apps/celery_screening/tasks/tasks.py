@@ -5,26 +5,23 @@ import urllib
 import aiohttp
 import requests
 from celery import shared_task
+
+from apps.celery_screening.logs.log_config import logger, file_handler, formatter
 from apps.celery_screening.models import Ticker24hrUSDT, Candles1mUSDT, SymbolList, AllCandlesUSDT
 from core.settings import env
-from django.db import transaction
+from django.db import transaction, IntegrityError
 
 from asgiref.sync import async_to_sync, sync_to_async
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from celery.signals import worker_ready
 
 # Создайте логгер
-logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 # Создайте обработчик для записи логов в файл
-file_handler = logging.FileHandler('app.log')
 file_handler.setLevel(logging.DEBUG)
 
 # Создайте форматтер и добавьте его к обработчику
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 file_handler.setFormatter(formatter)
 
 # Добавьте обработчик к логгеру
@@ -49,6 +46,20 @@ class BinanceAPIUrl:
 
         url = f"{BinanceAPIUrl.BASE_URL}?{urllib.parse.urlencode(params)}"
         return url
+
+
+class TradingIndicators:
+
+    @staticmethod
+    def calculate_atr(high, low, open_price):
+        atr = max(high - low, abs(high - open_price), abs(low - open_price))
+        return atr
+
+#Типичная цена
+    @staticmethod
+    def calculate_tp(high, low, close):
+        tp = (high + low + close) / 3
+        return tp
 
 
 
@@ -98,38 +109,46 @@ def get_ticker_all_pairs_usdt():
 
 
 @shared_task
-def get_ticker_all_pairs_usdt_candles_1m(c_count=25):
+def get_ticker_all_pairs_usdt_candles_1m():
     symbol_list = SymbolList.objects.get(id=1)
-    coins = symbol_list.symbols  # Получаем строку символов
-    coins_list = coins.split(',')
-    exit_count = 0
+    coins = symbol_list.symbols.split(',')
 
-    for coin in coins_list:
-        exit_count += 1
-        if exit_count == c_count:
-            break
+    async def fetch_data(session, url, coin):
+        async with session.get(url) as response:
+            if response.status == 200:
+                data = await response.json()
+                for candles in data:
+                    try:
+                        Candles1mUSDT.objects.update_or_create(
+                            symbol=coin,
+                            defaults={
+                                'open_time': int(candles[0]),
+                                'open_price': float(candles[1]),
+                                'high_price': float(candles[2]),
+                                'low_price': float(candles[3]),
+                                'close_price': float(candles[4]),
+                                'volume': float(candles[5]),
+                                'close_time': int(candles[6]),
+                                'base_asset_volume': float(candles[7]),
+                                'count': int(candles[8]),
+                                'taker_buy_volume': float(candles[9]),
+                                'taker_buy_base_asset_volume': float(candles[10]),
+                            }
+                        )
+                    except IntegrityError:
+                        print(f"Error updating/creating data for {coin}")
+            else:
+                print(f"Error fetching data for {coin}")
 
-        url = BinanceAPIUrl.generate_klines_url(symbol=coin)
-        response = requests.get(url)
-        data = response.json()
+    async def main():
+        async with aiohttp.ClientSession() as session:
+            tasks = []
+            for coin in coins:
+                url = BinanceAPIUrl.generate_klines_url(symbol=coin)
+                tasks.append(fetch_data(session, url, coin))
+            await asyncio.gather(*tasks)
 
-        for candles in data:
-            Candles1mUSDT.objects.update_or_create(
-                symbol=coin,
-                defaults={
-                    'open_time': int(candles[0]),
-                    'open_price': float(candles[1]),
-                    'high_price': float(candles[2]),
-                    'low_price': float(candles[3]),
-                    'close_price': float(candles[4]),
-                    'volume': float(candles[5]),
-                    'close_time': int(candles[6]),
-                    'base_asset_volume': float(candles[7]),
-                    'count': int(candles[8]),
-                    'taker_buy_volume': float(candles[9]),
-                    'taker_buy_base_asset_volume': float(candles[10]),
-                }
-            )
+    asyncio.run(main())
 
 
 # Асинхронное выполнение запросов
@@ -170,7 +189,19 @@ def get_ticker_all_pairs_usdt_candles_by_parameters(start_time=None, end_time=No
                             'base_asset_volume': float(candles[7]),
                             'count': int(candles[8]),
                             'taker_buy_volume': float(candles[9]),
-                            'taker_buy_base_asset_volume': float(candles[10])
+                            'taker_buy_base_asset_volume': float(candles[10]),
+                            'indicators': {
+                                'ATR': float(TradingIndicators.calculate_atr(
+                                    high=float(candles[2]),
+                                    low=float(candles[3]),
+                                    open_price=float(candles[1])
+                                )),
+                                'TP': float(TradingIndicators.calculate_tp(
+                                    high=float(candles[2]),
+                                    low=float(candles[3]),
+                                    close=float(candles[4])
+                                )),
+                            }
                         } for candles in data]
 
                         await sync_to_async(AllCandlesUSDT.objects.update_or_create)(
@@ -186,118 +217,7 @@ def get_ticker_all_pairs_usdt_candles_by_parameters(start_time=None, end_time=No
     async_to_sync(main)()
 
 
-
-
-# Параллельное выполнение запросов
-# @shared_task
-# def get_ticker_all_pairs_usdt_candles_by_parameters(start_time=None, end_time=None, field_db='all_candles_1mo_in_1y', interval='1M', limit=12):
-#     logger.info(f"Starting task: get_ticker_all_pairs_usdt_{field_db}")
-#
-#     def fetch_data(url, coin):
-#         response = requests.get(url)
-#         if response.status_code != 200:
-#             logger.error(f"API request failed for {coin} with status code: {response.status_code}")
-#             return None
-#         data = response.json()
-#         return coin, data
-#
-#     try:
-#         symbol_list = SymbolList.objects.get(id=1)
-#         coins = symbol_list.symbols.split(',')
-#
-#         with ThreadPoolExecutor(max_workers=10) as executor:
-#             futures = []
-#             for coin in coins:
-#                 url = BinanceAPIUrl.generate_klines_url(start_time=start_time, end_time=end_time, symbol=coin, interval=interval, limit=limit)
-#                 futures.append(executor.submit(fetch_data, url, coin))
-#
-#             for future in as_completed(futures):
-#                 result = future.result()
-#                 if result:
-#                     coin, data = result
-#                     candles_list = [{
-#                         'open_time': int(candles[0]),
-#                         'open_price': float(candles[1]),
-#                         'high_price': float(candles[2]),
-#                         'low_price': float(candles[3]),
-#                         'close_price': float(candles[4]),
-#                         'volume': float(candles[5]),
-#                         'close_time': int(candles[6]),
-#                         'base_asset_volume': float(candles[7]),
-#                         'count': int(candles[8]),
-#                         'taker_buy_volume': float(candles[9]),
-#                         'taker_buy_base_asset_volume': float(candles[10])
-#                     } for candles in data]
-#
-#                     obj, created = AllCandlesUSDT.objects.update_or_create(
-#                         symbol=coin,
-#                         defaults={field_db: candles_list}
-#                     )
-#
-#                     if created:
-#                         logger.info(f"Created new record for {coin}")
-#                     else:
-#                         logger.info(f"Updated record for {coin}")
-#
-#         logger.info(f"Completed task: get_ticker_all_pairs_usdt_{field_db}")
-#
-#     except Exception as e:
-#         logger.error(f"An error occurred: {e}")
-
-
-
-# Последовательное выполнение запросов
-# @shared_task
-# def get_ticker_all_pairs_usdt_candles_by_parameters(start_time=None, end_time=None, field_db='all_candles_1mo_in_1y', interval='1M', limit=12):
-#     logger.info(f"Starting task: get_ticker_all_pairs_usdt_{field_db}")
-#
-#     try:
-#         symbol_list = SymbolList.objects.get(id=1)
-#         coins = symbol_list.symbols  # Получаем строку символов
-#         coins_list = coins.split(',')
-#
-#         for coin in coins_list:
-#             url = BinanceAPIUrl.generate_klines_url(start_time=start_time, end_time=end_time, symbol=coin, interval=interval, limit=limit)
-#             response = requests.get(url)
-#
-#             if response.status_code != 200:
-#                 logger.error(f"API request failed for {coin} with status code: {response.status_code}")
-#                 continue
-#
-#             data = response.json()
-#
-#             candles_list = [{
-#                 'open_time': int(candles[0]),
-#                 'open_price': float(candles[1]),
-#                 'high_price': float(candles[2]),
-#                 'low_price': float(candles[3]),
-#                 'close_price': float(candles[4]),
-#                 'volume': float(candles[5]),
-#                 'close_time': int(candles[6]),
-#                 'base_asset_volume': float(candles[7]),
-#                 'count': int(candles[8]),
-#                 'taker_buy_volume': float(candles[9]),
-#                 'taker_buy_base_asset_volume': float(candles[10])
-#             } for candles in data]
-#
-#             obj, created = AllCandlesUSDT.objects.update_or_create(
-#                 symbol=coin,
-#                 defaults={
-#                     field_db: candles_list,
-#                 }
-#             )
-#
-#             if created:
-#                 logger.info(f"Created new record for {coin}")
-#             else:
-#                 logger.info(f"Updated record for {coin}")
-#
-#         logger.info("Completed task: get_ticker_all_pairs_usdt_candles_1mo_in_1year")
-#
-#     except Exception as e:
-#         logger.error(f"An error occurred: {e}")
-
-
+def
 
 
 

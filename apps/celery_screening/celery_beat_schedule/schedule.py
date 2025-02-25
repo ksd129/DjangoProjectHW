@@ -60,6 +60,7 @@ tasks = [
     ),
     TaskSchedule(
         'apps.celery_screening.tasks.tasks.get_ticker_all_pairs_usdt_candles_by_parameters',
+        # crontab(minute='*'),
         crontab(minute=18, hour='*'),
         field_db='all_candles_5m_in_24hr',
         interval='5m',
