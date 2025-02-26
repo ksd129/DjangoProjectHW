@@ -39,29 +39,28 @@ static_tasks = {
 tasks = [
     TaskSchedule(
         'apps.celery_screening.tasks.tasks.get_ticker_all_pairs_usdt_candles_by_parameters',
-        crontab(minute=0, hour=0, day_of_month=1),
+        crontab(minute='0', hour='0', day_of_month='1'),
         field_db='all_candles_1mo_in_1y',
         interval='1M',
         limit=12
     ),
     TaskSchedule(
         'apps.celery_screening.tasks.tasks.get_ticker_all_pairs_usdt_candles_by_parameters',
-        crontab(minute=0, hour=1),
+        crontab(minute='0', hour='1'),
         field_db='all_candles_1d_in_1mo',
         interval='1d',
         limit=30
     ),
     TaskSchedule(
         'apps.celery_screening.tasks.tasks.get_ticker_all_pairs_usdt_candles_by_parameters',
-        crontab(minute=20, hour='*'),
+        crontab(minute='0', hour='*'),
         field_db='all_candles_1hr_in_24hr',
         interval='1h',
         limit=24
     ),
     TaskSchedule(
         'apps.celery_screening.tasks.tasks.get_ticker_all_pairs_usdt_candles_by_parameters',
-        # crontab(minute='*'),
-        crontab(minute=18, hour='*'),
+        crontab(minute='*/5'),
         field_db='all_candles_5m_in_24hr',
         interval='5m',
         limit=288

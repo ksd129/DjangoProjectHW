@@ -1,12 +1,12 @@
+
 import asyncio
-import logging
 import urllib
 
 import aiohttp
 import requests
+import logging
+import aioredis
 from celery import shared_task
-
-from apps.celery_screening.logs.log_config import logger, file_handler, formatter
 from apps.celery_screening.models import Ticker24hrUSDT, Candles1mUSDT, SymbolList, AllCandlesUSDT
 from core.settings import env
 from django.db import transaction, IntegrityError
@@ -14,20 +14,23 @@ from django.db import transaction, IntegrityError
 from asgiref.sync import async_to_sync, sync_to_async
 
 
-
 # Создайте логгер
+logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 # Создайте обработчик для записи логов в файл
+file_handler = logging.FileHandler('app.log')
 file_handler.setLevel(logging.DEBUG)
 
 # Создайте форматтер и добавьте его к обработчику
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 file_handler.setFormatter(formatter)
 
 # Добавьте обработчик к логгеру
 logger.addHandler(file_handler)
 
-
+# RATE_LIMIT = 1000  # Установите лимит скорости (количество запросов в минуту)
+# RATE_LIMIT_INTERVAL = 60 / RATE_LIMIT  # Интервал между запросами в секундах
 
 class BinanceAPIUrl:
     BASE_URL = f"{env.str('URL_BINANCE')}{env.str('TICKER_KLINES')}"
@@ -62,8 +65,25 @@ class TradingIndicators:
         return tp
 
 
+async def acquire_semaphore(redis, semaphore_key, limit, timeout=60):
+    """Acquire a semaphore using Redis."""
+    while True:
+        count = await redis.incr(semaphore_key)
+        if count <= limit:
+            await redis.pexpire(semaphore_key, timeout * 1000)  # Set expiration
+            return True
+        else:
+            await redis.decr(semaphore_key)  # Decrement if limit exceeded
+            await asyncio.sleep(1)  # Wait and retry
 
-@shared_task
+async def release_semaphore(redis, semaphore_key):
+    """Release a semaphore using Redis."""
+    await redis.decr(semaphore_key)
+
+
+
+
+@shared_task(rate_limit='2/m')
 def get_ticker_all_pairs_usdt():
     url = f"{env.str('URL_BINANCE')}{env.str('TICKER_24HR')}"
     response = requests.get(url)
@@ -152,27 +172,34 @@ def get_ticker_all_pairs_usdt_candles_1m():
 
 
 # Асинхронное выполнение запросов
-@shared_task
+@shared_task(rate_limit='1/m')
 def get_ticker_all_pairs_usdt_candles_by_parameters(start_time=None, end_time=None, field_db='all_candles_1mo_in_1y', interval='1M', limit=12):
-    async def fetch_data(session, url, coin):
-        async with session.get(url) as response:
-            if response.status != 200:
-                logger.error(f"API request failed for {coin} with status code: {response.status}")
-                return None
-            data = await response.json()
-            return coin, data
+    async def fetch_data(session, url, coin, redis):
+        if not await acquire_semaphore(redis, "binance_api_semaphore", 1000):
+            return None
+        try:
+            async with session.get(url) as response:
+                if response.status != 200:
+                    logger.error(f"API request failed for {coin} with status code: {response.status}")
+                    return None
+                data = await response.json()
+                return coin, data
+        finally:
+            await release_semaphore(redis, "binance_api_semaphore")
 
     async def main():
         logger.info(f"Starting task: get_ticker_all_pairs_usdt_{field_db}")
         try:
+            redis = await aioredis.from_url(env.str('REDIS_URL'))
             symbol_list = await sync_to_async(SymbolList.objects.get)(id=1)
             coins = symbol_list.symbols.split(',')
 
             async with aiohttp.ClientSession() as session:
                 tasks = []
                 for coin in coins:
-                    url = BinanceAPIUrl.generate_klines_url(start_time=start_time, end_time=end_time, symbol=coin, interval=interval, limit=limit)
-                    tasks.append(fetch_data(session, url, coin))
+                    url = BinanceAPIUrl.generate_klines_url(start_time=start_time, end_time=end_time, symbol=coin,
+                                                            interval=interval, limit=limit)
+                    tasks.append(fetch_data(session, url, coin, redis))
 
                 responses = await asyncio.gather(*tasks)
                 for result in responses:
@@ -210,6 +237,7 @@ def get_ticker_all_pairs_usdt_candles_by_parameters(start_time=None, end_time=No
                         )
 
             logger.info(f"Completed task: get_ticker_all_pairs_usdt_{field_db}")
+            await redis.close()
 
         except Exception as e:
             logger.error(f"An error occurred: {e}")
@@ -217,24 +245,45 @@ def get_ticker_all_pairs_usdt_candles_by_parameters(start_time=None, end_time=No
     async_to_sync(main)()
 
 
-def
+
+
+@shared_task
+def analyze_all_candles_usdt():
+    async def process_record(record):
+        # Добавьте логику обработки записи здесь
+        print(f"Record: {record.id}")
+
+    async def fetch_all_records():
+        records = await sync_to_async(list)(AllCandlesUSDT.objects.all())
+        return records
+
+    async def main():
+        records = await fetch_all_records()
+        tasks = []
+        for record in records:
+            tasks.append(process_record(record))
+        await asyncio.gather(*tasks)
+
+    async_to_sync(main)()
 
 
 
-# запуск задач после запуска Celery
-# @worker_ready.connect
-# def at_startup(sender, **kwargs):
-#     start_time = None
-#     end_time = None
-#     field_db = 'all_candles_5m_in_24hr'
-#     interval = '5m'
-#     limit = 288
+
+
+# # запуск задач после запуска Celery
+# # @worker_ready.connect
+# # def at_startup(sender, **kwargs):
+# #     start_time = None
+# #     end_time = None
+# #     field_db = 'all_candles_5m_in_24hr'
+# #     interval = '5m'
+# #     limit = 288
+# #
+# #     # Запустите задачу с параметрами
+# #     get_ticker_all_pairs_usdt_candles_by_parameters.apply_async(args=(start_time, end_time, field_db, interval, limit))
 #
-#     # Запустите задачу с параметрами
-#     get_ticker_all_pairs_usdt_candles_by_parameters.apply_async(args=(start_time, end_time, field_db, interval, limit))
-
-
-
-
-
-
+#
+#
+#
+#
+#
