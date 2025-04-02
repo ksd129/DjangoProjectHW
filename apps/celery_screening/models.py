@@ -96,10 +96,7 @@ class AllCandlesUSDT(BaseTickerModelSymbol):
     all_candles_1mo_in_1y = models.JSONField(default=list)
 
     def __str__(self):
-        return self.symbol
-
-
-
+        return f"{self.symbol}: {self.all_candles_5m_in_24hr}"
 
 class SymbolList(models.Model):
     coin_filter = models.CharField(max_length=200, default='default_filter')
@@ -107,3 +104,13 @@ class SymbolList(models.Model):
 
     def __str__(self):
         return self.coin_filter
+
+class IndicatorATR(BaseTickerModelSymbol):
+    atr_coefficient_5m_in_24hr = models.DecimalField(max_digits=10, decimal_places=6, default=0.0, null=True, blank=True)
+    atr_coefficient_1hr_in_24hr = models.DecimalField(max_digits=10, decimal_places=6, default=0.0, null=True, blank=True)
+    atr_coefficient_1d_in_1mo = models.DecimalField(max_digits=10, decimal_places=6, default=0.0, null=True, blank=True)
+    atr_coefficient_1mo_in_1y = models.DecimalField(max_digits=10, decimal_places=6, default=0.0, null=True, blank=True)
+
+
+    def __str__(self):
+        return f"{self.symbol}: {self.atr_coefficient_5m_in_24hr}"

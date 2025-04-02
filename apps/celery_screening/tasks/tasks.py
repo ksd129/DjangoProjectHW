@@ -9,7 +9,7 @@ import aioredis
 from celery import shared_task
 from apps.celery_screening.models import Ticker24hrUSDT, Candles1mUSDT, SymbolList, AllCandlesUSDT
 from core.settings import env
-from django.db import transaction, IntegrityError
+from django.db import transaction, IntegrityError, connection
 
 from asgiref.sync import async_to_sync, sync_to_async
 
@@ -28,9 +28,6 @@ file_handler.setFormatter(formatter)
 
 # Добавьте обработчик к логгеру
 logger.addHandler(file_handler)
-
-# RATE_LIMIT = 1000  # Установите лимит скорости (количество запросов в минуту)
-# RATE_LIMIT_INTERVAL = 60 / RATE_LIMIT  # Интервал между запросами в секундах
 
 class BinanceAPIUrl:
     BASE_URL = f"{env.str('URL_BINANCE')}{env.str('TICKER_KLINES')}"
@@ -83,7 +80,7 @@ async def release_semaphore(redis, semaphore_key):
 
 
 
-@shared_task(rate_limit='2/m')
+@shared_task()
 def get_ticker_all_pairs_usdt():
     url = f"{env.str('URL_BINANCE')}{env.str('TICKER_24HR')}"
     response = requests.get(url)
@@ -173,7 +170,23 @@ def get_ticker_all_pairs_usdt_candles_1m():
 
 # Асинхронное выполнение запросов
 @shared_task(rate_limit='1/m')
-def get_ticker_all_pairs_usdt_candles_by_parameters(start_time=None, end_time=None, field_db='all_candles_1mo_in_1y', interval='1M', limit=12):
+def get_ticker_all_pairs_usdt_candles_by_parameters(start_time=None,
+                                                    end_time=None,
+                                                    field_db='all_candles_1mo_in_1y',
+                                                    interval='1M',
+                                                    limit=12):
+    # def reset_auto_increment():
+    #     # Удалите все записи из таблицы
+    #     AllCandlesUSDT.objects.all().delete()
+    #
+    #     # Сбросьте автоинкрементное значение
+    #     with connection.cursor() as cursor:
+    #         cursor.execute("ALTER SEQUENCE celery_screening_allcandlesusdt_id_seq RESTART WITH 1;")
+    #         # Примечание: замените your_app на имя вашего приложения
+    #
+    # # Пример использования
+    # reset_auto_increment()
+
     async def fetch_data(session, url, coin, redis):
         if not await acquire_semaphore(redis, "binance_api_semaphore", 1000):
             return None
@@ -186,6 +199,13 @@ def get_ticker_all_pairs_usdt_candles_by_parameters(start_time=None, end_time=No
                 return coin, data
         finally:
             await release_semaphore(redis, "binance_api_semaphore")
+
+    def sync_db_update(coin, candles_list):
+        with transaction.atomic():
+            obj, created = AllCandlesUSDT.objects.select_for_update().update_or_create(
+                symbol=coin,
+                defaults={field_db: candles_list}
+            )
 
     async def main():
         logger.info(f"Starting task: get_ticker_all_pairs_usdt_{field_db}")
@@ -207,34 +227,36 @@ def get_ticker_all_pairs_usdt_candles_by_parameters(start_time=None, end_time=No
                         coin, data = result
                         candles_list = [{
                             'open_time': int(candles[0]),
-                            'open_price': float(candles[1]),
-                            'high_price': float(candles[2]),
-                            'low_price': float(candles[3]),
-                            'close_price': float(candles[4]),
-                            'volume': float(candles[5]),
+                            'open_price': round(float(candles[1]), 6),
+                            'high_price': round(float(candles[2]), 6),
+                            'low_price': round(float(candles[3]), 6),
+                            'close_price': round(float(candles[4]), 6),
+                            'volume': round(float(candles[5]), 6),
                             'close_time': int(candles[6]),
-                            'base_asset_volume': float(candles[7]),
+                            'base_asset_volume': round(float(candles[7]), 6),
                             'count': int(candles[8]),
-                            'taker_buy_volume': float(candles[9]),
-                            'taker_buy_base_asset_volume': float(candles[10]),
+                            'taker_buy_volume': round(float(candles[9]), 6),
+                            'taker_buy_base_asset_volume': round(float(candles[10]), 6),
                             'indicators': {
-                                'ATR': float(TradingIndicators.calculate_atr(
-                                    high=float(candles[2]),
-                                    low=float(candles[3]),
-                                    open_price=float(candles[1])
-                                )),
-                                'TP': float(TradingIndicators.calculate_tp(
-                                    high=float(candles[2]),
-                                    low=float(candles[3]),
-                                    close=float(candles[4])
-                                )),
+                                'ATR': round(float(TradingIndicators.calculate_atr(
+                                    high=round(float(candles[2]), 6),
+                                    low=round(float(candles[3]), 6),
+                                    open_price=round(float(candles[1]), 6)
+                                )), 6),
+                                'TP': round(float(TradingIndicators.calculate_tp(
+                                    high=round(float(candles[2]), 6),
+                                    low=round(float(candles[3]), 6),
+                                    close=round(float(candles[4]), 6)
+                                )), 6),
                             }
                         } for candles in data]
 
-                        await sync_to_async(AllCandlesUSDT.objects.update_or_create)(
-                            symbol=coin,
-                            defaults={field_db: candles_list}
-                        )
+                        await sync_to_async(sync_db_update)(coin, candles_list)
+
+                        # await sync_to_async(AllCandlesUSDT.objects.update_or_create)(
+                        #     symbol=coin,
+                        #     defaults={field_db: candles_list}
+                        # )
 
             logger.info(f"Completed task: get_ticker_all_pairs_usdt_{field_db}")
             await redis.close()
