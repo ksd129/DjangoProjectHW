@@ -1,6 +1,5 @@
 
 import asyncio
-import urllib
 
 import aiohttp
 import requests
@@ -8,8 +7,9 @@ import logging
 import aioredis
 from celery import shared_task
 from apps.celery_screening.models import Ticker24hrUSDT, Candles1mUSDT, SymbolList, AllCandlesUSDT
+from apps.celery_screening.tasks.modules.binance_client import BinanceAPIUrl
 from core.settings import env
-from django.db import transaction, IntegrityError, connection
+from django.db import transaction, IntegrityError
 
 from asgiref.sync import async_to_sync, sync_to_async
 
@@ -28,24 +28,6 @@ file_handler.setFormatter(formatter)
 
 # Добавьте обработчик к логгеру
 logger.addHandler(file_handler)
-
-class BinanceAPIUrl:
-    BASE_URL = f"{env.str('URL_BINANCE')}{env.str('TICKER_KLINES')}"
-
-    @staticmethod
-    def generate_klines_url(symbol, interval, start_time, end_time, limit):
-        params = {
-            "symbol": symbol,
-            "interval": interval,
-            "limit": limit
-        }
-        if start_time:
-            params["startTime"] = start_time
-        if end_time:
-            params["endTime"] = end_time
-
-        url = f"{BinanceAPIUrl.BASE_URL}?{urllib.parse.urlencode(params)}"
-        return url
 
 
 class TradingIndicators:
@@ -169,7 +151,7 @@ def get_ticker_all_pairs_usdt_candles_1m():
 
 
 # Асинхронное выполнение запросов
-@shared_task(rate_limit='1/m')
+@shared_task()
 def get_ticker_all_pairs_usdt_candles_by_parameters(start_time=None,
                                                     end_time=None,
                                                     field_db='all_candles_1mo_in_1y',
